@@ -29,7 +29,7 @@ static int cmp_name(const void *a, const void *b)
     const FileEntry *x = a, *y = b;
     int g = group_rank(x) - group_rank(y);
     if (g) return g;
-    return strcmp(x->name, y->name);
+    return strcasecmp(x->name, y->name);
 }
 
 static int cmp_size(const void *a, const void *b)

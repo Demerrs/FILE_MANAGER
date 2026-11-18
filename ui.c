@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
-enum { CP_DIR = 1, CP_LINK, CP_SEL, CP_HEADER, CP_ERR };
+enum { CP_DIR = 1, CP_LINK, CP_SEL, CP_HEADER, CP_ERR, CP_ACTIVE };
 
 void ui_init(void)
 {
@@ -24,6 +24,7 @@ void ui_init(void)
         init_pair(CP_SEL,    COLOR_BLACK, COLOR_CYAN);
         init_pair(CP_HEADER, COLOR_BLACK, COLOR_WHITE);
         init_pair(CP_ERR,    COLOR_RED,   -1);
+        init_pair(CP_ACTIVE, COLOR_YELLOW, -1);
     }
 }
 
@@ -32,7 +33,6 @@ void ui_shutdown(void)
     endwin();
 }
 
-/* "rwxr-xr-x" */
 static void perm_string(mode_t m, char out[10])
 {
     const char *c = "rwxrwxrwx";
@@ -53,6 +53,7 @@ static void human_size(off_t sz, char *buf, size_t n)
 
 static void draw_panel(Panel *p, int x, int w, int h, int active)
 {
+
     if (active) attron(A_BOLD);
     mvaddch(0, x, ACS_ULCORNER);
     mvhline(0, x + 1, ACS_HLINE, w - 2);
@@ -62,15 +63,19 @@ static void draw_panel(Panel *p, int x, int w, int h, int active)
     mvaddch(h - 1, x, ACS_LLCORNER);
     mvhline(h - 1, x + 1, ACS_HLINE, w - 2);
     mvaddch(h - 1, x + w - 1, ACS_LRCORNER);
-
-    int maxt = w - 4;
-    const char *t = p->path;
-    if ((int)strlen(t) > maxt) t += strlen(t) - maxt;
-    mvprintw(0, x + 2, "%.*s", maxt, t);
     if (active) attroff(A_BOLD);
 
+    int maxt = w - 6;
+    const char *t = p->path;
+    if ((int)strlen(t) > maxt) t += strlen(t) - maxt;
+
+    int title_attr = active ? (COLOR_PAIR(CP_ACTIVE) | A_REVERSE | A_BOLD) : 0;
+    attron(title_attr);
+    mvprintw(0, x + 2, " %.*s ", maxt, t);
+    attroff(title_attr);
+
     int inner_w = w - 2;
-    int rows    = h - 3;
+    int rows    = h - 3; 
 
     if (p->selected < p->scroll) p->scroll = p->selected;
     if (p->selected >= p->scroll + (size_t)rows) p->scroll = p->selected - rows + 1;
@@ -94,9 +99,8 @@ static void draw_panel(Panel *p, int x, int w, int h, int active)
         if (e->type == FT_DIRECTORY) attr = COLOR_PAIR(CP_DIR) | A_BOLD;
         if (e->type == FT_SYMLINK)   attr = COLOR_PAIR(CP_LINK);
         if (i == p->selected && active) attr = COLOR_PAIR(CP_SEL);
-        else if (i == p->selected)      attr |= A_REVERSE;
 
-        int name_w = inner_w - 19;     /* room for " 10.5M rwxr-xr-x" */
+        int name_w = inner_w - 19;
         if (name_w < 5) name_w = 5;
 
         attron(attr);
