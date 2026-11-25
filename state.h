@@ -32,6 +32,7 @@ void panel_free(Panel *p);
 
 int  panel_delete_selected(Panel *p);
 int  panel_create(Panel *p, const char *name, int is_dir);
+int  panel_create_symlink(Panel *p, const char *target, const char *name);
 
 const char *sort_name(SortMode m);
 

@@ -5,10 +5,11 @@
 #include <ctype.h>
 #include <ncurses.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
-enum { CP_DIR = 1, CP_LINK, CP_SEL, CP_HEADER, CP_ERR, CP_ACTIVE, CP_OK };
+enum { CP_DIR = 1, CP_LINK, CP_SEL, CP_ERR, CP_ACTIVE, CP_OK, CP_KEY };
 
 void ui_init(void)
 {
@@ -24,10 +25,10 @@ void ui_init(void)
         init_pair(CP_DIR,    COLOR_BLUE,   -1);
         init_pair(CP_LINK,   COLOR_CYAN,   -1);
         init_pair(CP_SEL,    COLOR_BLACK,  COLOR_CYAN);
-        init_pair(CP_HEADER, COLOR_BLACK,  COLOR_WHITE);
         init_pair(CP_ERR,    COLOR_RED,    -1);
         init_pair(CP_ACTIVE, COLOR_YELLOW, -1);
         init_pair(CP_OK,     COLOR_GREEN,  -1);
+        init_pair(CP_KEY,    COLOR_BLACK,  COLOR_CYAN);
     }
 }
 
@@ -126,6 +127,57 @@ static void draw_panel(Panel *p, int x, int w, int h, int active)
     }
 }
 
+static void draw_hints(int y, int W)
+{
+    static const char *hints[][2] = {
+        { "Tab",  "Panel"  },
+        { "Ent",  "Open"   },
+        { "Bksp", "Up"     },
+        { "S",    "Sort"   },
+        { "N",    "File"   },
+        { "M",    "Dir"    },
+        { "L",    "Link"   },
+        { "D",    "Delete" },
+        { "R",    "Reload" },
+        { "Q",    "Quit"   },
+    };
+    int n = sizeof hints / sizeof hints[0];
+
+    int left  = 1;
+    int avail = W - 2;
+
+    int text = 0;
+    for (int i = 0; i < n; i++)
+        text += (int)strlen(hints[i][0]) + 1 + (int)strlen(hints[i][1]);
+
+    int pad = (avail >= text + 2 * n + (n - 1)) ? 1 : 0;
+    int used = text + 2 * n * pad;
+    int gaps = n - 1;
+    int gap  = (avail > used) ? (avail - used) / gaps : 1;
+    int rest = (avail > used) ? (avail - used) % gaps : 0;
+    if (gap < 1) gap = 1;
+
+    move(y, 0);
+    clrtoeol();
+
+    int x = left;
+    for (int i = 0; i < n; i++) {
+        const char *key   = hints[i][0];
+        const char *label = hints[i][1];
+        int keyw  = (int)strlen(key) + 2 * pad;
+        int itemw = keyw + 1 + (int)strlen(label);
+        if (x + itemw > left + avail) break;
+
+        attron(COLOR_PAIR(CP_KEY));
+        mvprintw(y, x, "%*s%s%*s", pad, "", key, pad, "");
+        attroff(COLOR_PAIR(CP_KEY));
+
+        mvprintw(y, x + keyw, " %s", label);
+
+        x += itemw + gap + (i < rest ? 1 : 0);
+    }
+}
+
 void ui_draw(AppState *s)
 {
     int H, W;
@@ -137,10 +189,7 @@ void ui_draw(AppState *s)
     draw_panel(&s->panels[0], 0,  lw,     ph, s->active == 0);
     draw_panel(&s->panels[1], lw, W - lw, ph, s->active == 1);
 
-    attron(COLOR_PAIR(CP_HEADER));
-    mvhline(H - 1, 0, ' ', W);
-    mvprintw(H - 1, 0, " Tab:panel  Enter:open  Bksp:up  s:sort  n:new file  m:new dir  d:delete  r:reload  q:quit");
-    attroff(COLOR_PAIR(CP_HEADER));
+    draw_hints(H - 1, W);
 
     refresh();
 }
@@ -170,12 +219,12 @@ static void popup_close(WINDOW *win)
     touchwin(stdscr);
 }
 
-static int ui_confirm(const char *title, const char *line1, const char *line2, int color)
+static int ui_confirm(const char *title, const char *line1, const char *line2, int color, int default_yes)
 {
     int w = 56;
     WINDOW *win = popup_open(8, w, title, color);
     w = getmaxx(win);
-    int choice = 0;
+    int choice = default_yes ? 1 : 0;
 
     for (;;) {
         mvwprintw(win, 2, 2, "%.*s", w - 4, line1);
@@ -206,8 +255,7 @@ static int ui_input(const char *title, const char *prompt, char *buf, size_t siz
     WINDOW *win = popup_open(7, w, title, CP_OK);
     w = getmaxx(win);
     int field_w = w - 4;
-    size_t len = 0;
-    buf[0] = '\0';
+    size_t len = strlen(buf);
     int result = -1;
 
     curs_set(1);
@@ -271,7 +319,7 @@ static void do_delete(AppState *s)
                         ? "Everything inside it will be deleted too."
                         : "This cannot be undone.";
 
-    if (!ui_confirm("Delete", line1, line2, CP_ERR)) return;
+    if (!ui_confirm("Delete", line1, line2, CP_ERR, 0)) return;
 
     if (panel_delete_selected(p) < 0)
         ui_message("Error", p->error);
@@ -281,7 +329,7 @@ static void do_delete(AppState *s)
 static void do_create(AppState *s, int is_dir)
 {
     Panel *p = &s->panels[s->active];
-    char name[NAME_MAX + 1];
+    char name[NAME_MAX + 1] = "";
 
     const char *title = is_dir ? "New directory" : "New file";
     if (!ui_input(title, "Name:", name, sizeof name)) return;
@@ -289,9 +337,39 @@ static void do_create(AppState *s, int is_dir)
 
     char line1[300];
     snprintf(line1, sizeof line1, "Create %s \"%s\"?", is_dir ? "directory" : "file", name);
-    if (!ui_confirm(title, line1, p->path, CP_OK)) return;
+    if (!ui_confirm(title, line1, p->path, CP_OK, 1)) return;
 
     if (panel_create(p, name, is_dir) < 0)
+        ui_message("Error", p->error);
+    panel_reload(&s->panels[!s->active]);
+}
+
+static void do_symlink(AppState *s)
+{
+    Panel *p = &s->panels[s->active];
+    char target[PATH_MAX] = "";
+    char name[NAME_MAX + 1] = "";
+
+    if (p->count && strcmp(p->entries[p->selected].name, "..") != 0) {
+        char *full = fs_join(p->path, p->entries[p->selected].name);
+        if (full) {
+            snprintf(target, sizeof target, "%s", full);
+            free(full);
+        }
+        snprintf(name, sizeof name, "%.240s_link", p->entries[p->selected].name);
+    }
+
+    if (!ui_input("New symlink", "Points to (target):", target, sizeof target)) return;
+    if (target[0] == '\0') return;
+    if (!ui_input("New symlink", "Link name:", name, sizeof name)) return;
+    if (name[0] == '\0') return;
+
+    char line1[300], line2[300];
+    snprintf(line1, sizeof line1, "Create link \"%.200s\"?", name);
+    snprintf(line2, sizeof line2, "-> %.250s", target);
+    if (!ui_confirm("New symlink", line1, line2, CP_OK, 1)) return;
+
+    if (panel_create_symlink(p, target, name) < 0)
         ui_message("Error", p->error);
     panel_reload(&s->panels[!s->active]);
 }
@@ -346,6 +424,9 @@ int ui_handle_key(AppState *s, int ch)
         break;
     case 'm': case 'M': case KEY_F(7):
         do_create(s, 1);
+        break;
+    case 'l': case 'L':
+        do_symlink(s);
         break;
     case 'd': case 'D': case KEY_DC: case KEY_F(8):
         do_delete(s);

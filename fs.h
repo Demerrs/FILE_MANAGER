@@ -29,5 +29,6 @@ char *fs_join(const char *dir, const char *name);
 int fs_create_file(const char *path);
 int fs_create_dir(const char *path);
 int fs_delete(const char *path);
+int fs_create_symlink(const char *target, const char *linkpath);
 
 #endif

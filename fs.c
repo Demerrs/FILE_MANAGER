@@ -105,6 +105,11 @@ int fs_create_file(const char *path)
     return close(fd);
 }
 
+int fs_create_symlink(const char *target, const char *linkpath)
+{
+    return symlink(target, linkpath);
+}
+
 int fs_create_dir(const char *path)
 {
     return mkdir(path, 0755);

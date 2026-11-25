@@ -193,13 +193,19 @@ int panel_delete_selected(Panel *p)
     return 0;
 }
 
-int panel_create(Panel *p, const char *name, int is_dir)
+static int check_name(Panel *p, const char *name)
 {
     if (name[0] == '\0' || strchr(name, '/') ||
         strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
         snprintf(p->error, sizeof p->error, "Invalid name: \"%.200s\"", name);
         return -1;
     }
+    return 0;
+}
+
+int panel_create(Panel *p, const char *name, int is_dir)
+{
+    if (check_name(p, name) < 0) return -1;
 
     char *full = fs_join(p->path, name);
     if (!full) {
@@ -213,6 +219,34 @@ int panel_create(Panel *p, const char *name, int is_dir)
 
     if (rc < 0) {
         snprintf(p->error, sizeof p->error, "Create failed: %s", strerror(err));
+        return -1;
+    }
+
+    panel_reload(p);
+    select_by_name(p, name);
+    return 0;
+}
+
+int panel_create_symlink(Panel *p, const char *target, const char *name)
+{
+    if (check_name(p, name) < 0) return -1;
+    if (target[0] == '\0') {
+        snprintf(p->error, sizeof p->error, "The link target is empty");
+        return -1;
+    }
+
+    char *full = fs_join(p->path, name);
+    if (!full) {
+        snprintf(p->error, sizeof p->error, "%s", strerror(ENOMEM));
+        return -1;
+    }
+
+    int rc  = fs_create_symlink(target, full);
+    int err = errno;
+    free(full);
+
+    if (rc < 0) {
+        snprintf(p->error, sizeof p->error, "Link failed: %s", strerror(err));
         return -1;
     }
 
