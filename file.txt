@@ -1,0 +1,4 @@
+Pe data viitoare: 
+
+Tipurile de sortare de terminat
+Stergere/Adaugare cu pop-uri

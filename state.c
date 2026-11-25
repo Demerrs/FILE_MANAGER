@@ -6,13 +6,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 const char *sort_name(SortMode m)
 {
     switch (m) {
-    case SORT_NAME: return "nume";
-    case SORT_SIZE: return "dimensiune";
-    case SORT_DATE: return "data";
+    case SORT_NAME: return "name";
+    case SORT_SIZE: return "size";
+    case SORT_DATE: return "date";
     }
     return "?";
 }
@@ -38,7 +39,7 @@ static int cmp_size(const void *a, const void *b)
     int g = group_rank(x) - group_rank(y);
     if (g) return g;
     if (x->size != y->size) return (x->size > y->size) ? -1 : 1;
-    return strcmp(x->name, y->name);
+    return strcasecmp(x->name, y->name);
 }
 
 static int cmp_date(const void *a, const void *b)
@@ -47,7 +48,7 @@ static int cmp_date(const void *a, const void *b)
     int g = group_rank(x) - group_rank(y);
     if (g) return g;
     if (x->mtime != y->mtime) return (x->mtime > y->mtime) ? -1 : 1;
-    return strcmp(x->name, y->name);
+    return strcasecmp(x->name, y->name);
 }
 
 void panel_sort(Panel *p)
@@ -56,6 +57,28 @@ void panel_sort(Panel *p)
     if (p->sort == SORT_SIZE) cmp = cmp_size;
     if (p->sort == SORT_DATE) cmp = cmp_date;
     qsort(p->entries, p->count, sizeof(FileEntry), cmp);
+}
+
+static int select_by_name(Panel *p, const char *name)
+{
+    for (size_t i = 0; i < p->count; i++) {
+        if (strcmp(p->entries[i].name, name) == 0) {
+            p->selected = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void panel_cycle_sort(Panel *p)
+{
+    char keep[NAME_MAX + 1] = "";
+    if (p->count) snprintf(keep, sizeof keep, "%s", p->entries[p->selected].name);
+
+    p->sort = (SortMode)((p->sort + 1) % 3);
+    panel_sort(p);
+
+    if (keep[0]) select_by_name(p, keep);
 }
 
 void panel_init(Panel *p, const char *path)
@@ -69,13 +92,14 @@ int panel_load(Panel *p, const char *path)
 {
     char resolved[PATH_MAX];
     if (!realpath(path, resolved)) {
-        snprintf(p->error, sizeof p->error, "%s: %s", path, strerror(errno));
+        snprintf(p->error, sizeof p->error, "%.200s: %s", path, strerror(errno));
         return -1;
     }
 
     FileEntry *entries;
     size_t count;
     if (fs_read_dir(resolved, &entries, &count) < 0) {
+
         snprintf(p->error, sizeof p->error, "%.200s: %s", resolved, strerror(errno));
         return -1;
     }
@@ -90,6 +114,28 @@ int panel_load(Panel *p, const char *path)
     p->path[sizeof p->path - 1] = '\0';
 
     panel_sort(p);
+    return 0;
+}
+
+int panel_reload(Panel *p)
+{
+    char keep[NAME_MAX + 1] = "";
+    size_t old_index = p->selected;
+    if (p->count) snprintf(keep, sizeof keep, "%s", p->entries[p->selected].name);
+
+    char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s", p->path);
+    while (panel_load(p, path) < 0) {
+        if (strcmp(path, "/") == 0) return -1;
+        char *slash = strrchr(path, '/');
+        if (slash == path) path[1] = '\0';
+        else               *slash = '\0';
+    }
+
+    if (!keep[0] || !select_by_name(p, keep)) {
+        if (old_index < p->count)  p->selected = old_index;
+        else if (p->count)         p->selected = p->count - 1;
+    }
     return 0;
 }
 
@@ -117,6 +163,62 @@ void panel_enter(Panel *p)
     if (!target) return;
     panel_load(p, target);
     free(target);
+}
+
+int panel_delete_selected(Panel *p)
+{
+    if (p->count == 0) return -1;
+    FileEntry *e = &p->entries[p->selected];
+    if (strcmp(e->name, "..") == 0) {
+        snprintf(p->error, sizeof p->error, "Cannot delete \"..\"");
+        return -1;
+    }
+
+    char *full = fs_join(p->path, e->name);
+    if (!full) {
+        snprintf(p->error, sizeof p->error, "%s", strerror(ENOMEM));
+        return -1;
+    }
+
+    int rc  = fs_delete(full);
+    int err = errno;
+    free(full);
+
+    panel_reload(p);
+
+    if (rc < 0) {
+        snprintf(p->error, sizeof p->error, "Delete failed: %s", strerror(err));
+        return -1;
+    }
+    return 0;
+}
+
+int panel_create(Panel *p, const char *name, int is_dir)
+{
+    if (name[0] == '\0' || strchr(name, '/') ||
+        strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        snprintf(p->error, sizeof p->error, "Invalid name: \"%.200s\"", name);
+        return -1;
+    }
+
+    char *full = fs_join(p->path, name);
+    if (!full) {
+        snprintf(p->error, sizeof p->error, "%s", strerror(ENOMEM));
+        return -1;
+    }
+
+    int rc  = is_dir ? fs_create_dir(full) : fs_create_file(full);
+    int err = errno;
+    free(full);
+
+    if (rc < 0) {
+        snprintf(p->error, sizeof p->error, "Create failed: %s", strerror(err));
+        return -1;
+    }
+
+    panel_reload(p);
+    select_by_name(p, name);
+    return 0;
 }
 
 void panel_free(Panel *p)

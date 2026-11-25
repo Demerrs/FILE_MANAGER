@@ -26,4 +26,8 @@ void fs_free_entries(FileEntry *entries, size_t count);
 
 char *fs_join(const char *dir, const char *name);
 
+int fs_create_file(const char *path);
+int fs_create_dir(const char *path);
+int fs_delete(const char *path);
+
 #endif

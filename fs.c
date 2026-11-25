@@ -4,6 +4,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -94,4 +95,45 @@ void fs_free_entries(FileEntry *entries, size_t count)
         free(entries[i].link_target);
     }
     free(entries);
+}
+
+int fs_create_file(const char *path)
+{
+
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0644);
+    if (fd < 0) return -1;
+    return close(fd);
+}
+
+int fs_create_dir(const char *path)
+{
+    return mkdir(path, 0755);
+}
+
+int fs_delete(const char *path)
+{
+    struct stat st;
+    if (lstat(path, &st) < 0) return -1;
+
+    if (!S_ISDIR(st.st_mode)) return unlink(path);
+
+    FileEntry *list;
+    size_t n;
+    if (fs_read_dir(path, &list, &n) < 0) return -1;
+
+    int rc = 0;
+    for (size_t i = 0; i < n && rc == 0; i++) {
+        if (strcmp(list[i].name, "..") == 0) continue;
+        char *child = fs_join(path, list[i].name);
+        if (!child) { errno = ENOMEM; rc = -1; break; }
+        rc = fs_delete(child);
+        free(child);
+    }
+
+    int saved = errno;
+    fs_free_entries(list, n);
+    errno = saved;
+
+    if (rc < 0) return -1;
+    return rmdir(path);
 }
